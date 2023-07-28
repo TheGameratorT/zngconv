@@ -1,0 +1,8 @@
+version "1.0"
+package "zngconv"
+purpose "ZNG Converter"
+
+option "input" i "Input file path" required string
+option "output" o "Output file path" required string
+option "c1" - "First pass compression level" int optional default="12"
+option "c2" - "Second pass compression level" int optional default="11"
