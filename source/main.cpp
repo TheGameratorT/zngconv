@@ -137,7 +137,7 @@ bool savePNG(const std::filesystem::path& pngPath, const char* rgbaData, int wid
 	return saveOutputFile(pngPath, pngData, pngDataLen);
 }
 
-bool convert_zng_to_png(std::ifstream& inputFile, std::size_t inputFileSize, const std::filesystem::path& outputFilePath) {
+bool convert_zng_to_png(std::ifstream& inputFile, std::size_t inputFileSize, const std::filesystem::path& outputFilePath, bool savePasses) {
 	ZNG* zng = loadZNG(inputFile, inputFileSize);
 	if (zng == nullptr) {
 		return false;
@@ -152,12 +152,20 @@ bool convert_zng_to_png(std::ifstream& inputFile, std::size_t inputFileSize, con
 	}
 	DestructorGuard pass1res_guard([&](){ freeLZ4(pass1res); });
 
+	if (savePasses) {
+		saveOutputFile(outputFilePath.string() + ".pass1", pass1res, lz4->uncompressedSize);
+	}
+
 	char* pass2res = decompressLZ4(pass1res->data, pass1res->uncompressedSize, pass1res->compressedSize);
 	if (pass2res == nullptr) {
 		std::cerr << "Second pass of decompression failed." << std::endl;
 		return false;
 	}
 	DestructorGuard pass2res_guard([&](){ freeLZ4(pass2res); });
+
+	if (savePasses) {
+		saveOutputFile(outputFilePath.string() + ".pass2", pass2res, pass1res->uncompressedSize);
+	}
 
 	if (!savePNG(outputFilePath, pass2res, zng->width, zng->height)) {
 		return false;
@@ -166,7 +174,7 @@ bool convert_zng_to_png(std::ifstream& inputFile, std::size_t inputFileSize, con
 	return true;
 }
 
-bool convert_img_to_zng(std::ifstream& inputFile, std::size_t inputFileSize, const std::filesystem::path& outputFilePath, int c1, int c2) {
+bool convert_img_to_zng(std::ifstream& inputFile, std::size_t inputFileSize, const std::filesystem::path& outputFilePath, int c1, int c2, bool savePasses) {
 	unsigned char* inputData = new unsigned char[inputFileSize];
 	inputFile.read(reinterpret_cast<char*>(inputData), inputFileSize);
 
@@ -187,12 +195,20 @@ bool convert_img_to_zng(std::ifstream& inputFile, std::size_t inputFileSize, con
 	}
 	DestructorGuard pass1res_guard([&](){ freeLZ4(pass1res); });
 
+	if (savePasses) {
+		saveOutputFile(outputFilePath.string() + ".pass1", pass1res, 8 + pass1res->compressedSize);
+	}
+
 	LZ4* pass2res = compressLZ4(reinterpret_cast<char*>(pass1res), 8 + pass1res->compressedSize, c2);
 	if (pass2res == nullptr) {
 		std::cerr << "Second pass of compression failed." << std::endl;
 		return false;
 	}
 	DestructorGuard pass2res_guard([&](){ freeLZ4(pass2res); });
+
+	if (savePasses) {
+		saveOutputFile(outputFilePath.string() + ".pass2", pass2res, 8 + pass2res->compressedSize);
+	}
 
 	std::size_t zngFileSize = 16 + 8 + pass2res->compressedSize;
 	auto zngFile = reinterpret_cast<ZNG*>(new char[zngFileSize]);
@@ -224,11 +240,11 @@ int main(int argc, char* argv[]) {
 	DestructorGuard inputFile_guard([&](){ inputFile.close(); });
 
 	if (inputIsZNG) {
-		if (!convert_zng_to_png(inputFile, inputFileSize, args_info.output_arg)) {
+		if (!convert_zng_to_png(inputFile, inputFileSize, args_info.output_arg, args_info.save_passes_given)) {
 			return 1;
 		}
 	} else {
-		if (!convert_img_to_zng(inputFile, inputFileSize, args_info.output_arg, args_info.c1_arg, args_info.c2_arg)) {
+		if (!convert_img_to_zng(inputFile, inputFileSize, args_info.output_arg, args_info.c1_arg, args_info.c2_arg, args_info.save_passes_given)) {
 			return 1;
 		}
 	}

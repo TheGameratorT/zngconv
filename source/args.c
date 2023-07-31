@@ -38,7 +38,8 @@ const char *gengetopt_args_info_help[] = {
   "  -i, --input=STRING   Input file path",
   "  -o, --output=STRING  Output file path",
   "      --c1=INT         First pass compression level  (default=`12')",
-  "      --c2=INT         Second pass compression level  (default=`11')",
+  "      --c2=INT         Second pass compression level  (default=`12')",
+  "  -s, --save-passes    Save all passes",
     0
 };
 
@@ -71,6 +72,7 @@ void clear_given (struct gengetopt_args_info *args_info)
   args_info->output_given = 0 ;
   args_info->c1_given = 0 ;
   args_info->c2_given = 0 ;
+  args_info->save_passes_given = 0 ;
 }
 
 static
@@ -83,7 +85,7 @@ void clear_args (struct gengetopt_args_info *args_info)
   args_info->output_orig = NULL;
   args_info->c1_arg = 12;
   args_info->c1_orig = NULL;
-  args_info->c2_arg = 11;
+  args_info->c2_arg = 12;
   args_info->c2_orig = NULL;
   
 }
@@ -99,6 +101,7 @@ void init_args_info(struct gengetopt_args_info *args_info)
   args_info->output_help = gengetopt_args_info_help[3] ;
   args_info->c1_help = gengetopt_args_info_help[4] ;
   args_info->c2_help = gengetopt_args_info_help[5] ;
+  args_info->save_passes_help = gengetopt_args_info_help[6] ;
   
 }
 
@@ -236,6 +239,8 @@ cmdline_parser_dump(FILE *outfile, struct gengetopt_args_info *args_info)
     write_into_file(outfile, "c1", args_info->c1_orig, 0);
   if (args_info->c2_given)
     write_into_file(outfile, "c2", args_info->c2_orig, 0);
+  if (args_info->save_passes_given)
+    write_into_file(outfile, "save-passes", 0, 0 );
   
 
   i = EXIT_SUCCESS;
@@ -1129,6 +1134,7 @@ cmdline_parser_internal (
         { "output",	1, NULL, 'o' },
         { "c1",	1, NULL, 0 },
         { "c2",	1, NULL, 0 },
+        { "save-passes",	0, NULL, 's' },
         { 0,  0, 0, 0 }
       };
 
@@ -1137,7 +1143,7 @@ cmdline_parser_internal (
       custom_opterr = opterr;
       custom_optopt = optopt;
 
-      c = custom_getopt_long (argc, argv, "hVi:o:", long_options, &option_index);
+      c = custom_getopt_long (argc, argv, "hVi:o:s", long_options, &option_index);
 
       optarg = custom_optarg;
       optind = custom_optind;
@@ -1182,6 +1188,18 @@ cmdline_parser_internal (
             goto failure;
         
           break;
+        case 's':	/* Save all passes.  */
+        
+        
+          if (update_arg( 0 , 
+               0 , &(args_info->save_passes_given),
+              &(local_args_info.save_passes_given), optarg, 0, 0, ARG_NO,
+              check_ambiguity, override, 0, 0,
+              "save-passes", 's',
+              additional_error))
+            goto failure;
+        
+          break;
 
         case 0:	/* Long option with no short option */
           /* First pass compression level.  */
@@ -1205,7 +1223,7 @@ cmdline_parser_internal (
           
             if (update_arg( (void *)&(args_info->c2_arg), 
                  &(args_info->c2_orig), &(args_info->c2_given),
-                &(local_args_info.c2_given), optarg, 0, "11", ARG_INT,
+                &(local_args_info.c2_given), optarg, 0, "12", ARG_INT,
                 check_ambiguity, override, 0, 0,
                 "c2", '-',
                 additional_error))

@@ -48,9 +48,10 @@ struct gengetopt_args_info
   int c1_arg;	/**< @brief First pass compression level (default='12').  */
   char * c1_orig;	/**< @brief First pass compression level original value given at command line.  */
   const char *c1_help; /**< @brief First pass compression level help description.  */
-  int c2_arg;	/**< @brief Second pass compression level (default='11').  */
+  int c2_arg;	/**< @brief Second pass compression level (default='12').  */
   char * c2_orig;	/**< @brief Second pass compression level original value given at command line.  */
   const char *c2_help; /**< @brief Second pass compression level help description.  */
+  const char *save_passes_help; /**< @brief Save all passes help description.  */
   
   unsigned int help_given ;	/**< @brief Whether help was given.  */
   unsigned int version_given ;	/**< @brief Whether version was given.  */
@@ -58,6 +59,7 @@ struct gengetopt_args_info
   unsigned int output_given ;	/**< @brief Whether output was given.  */
   unsigned int c1_given ;	/**< @brief Whether c1 was given.  */
   unsigned int c2_given ;	/**< @brief Whether c2 was given.  */
+  unsigned int save_passes_given ;	/**< @brief Whether save-passes was given.  */
 
 } ;
 
