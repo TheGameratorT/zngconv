@@ -5,6 +5,7 @@
 #include <fstream>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <stdint.h>
 #include <lz4.h>
 #include <lz4hc.h>
@@ -41,84 +42,36 @@ struct ZNG {
 	LZ4 lz4;
 };
 
-inline void freeZNG(ZNG* ptr) {
-	delete[] ptr;
-}
+static std::unique_ptr<char[]> decompressLZ4(const void* compressedData, std::size_t uncompressedSize, std::size_t compressedSize) {
+	auto decompressedBuffer = std::make_unique<char[]>(uncompressedSize);
 
-ZNG* loadZNG(std::ifstream& inputFile, std::size_t inputFileSize) {
-	auto zngFile = reinterpret_cast<ZNG*>(new char[inputFileSize]);
-	inputFile.read(reinterpret_cast<char*>(zngFile), inputFileSize);
-
-	if (zngFile->magic != ZNG_MAGIC_NUMBER) {
-		freeZNG(zngFile);
-		return nullptr;
-	}
-
-	if (zngFile->bpp != 32) {
-		if (zngFile->bpp == 8) {
-			std::cerr << "Not supported 8bpp zng" << std::endl;
-			freeZNG(zngFile);
-			return nullptr;
-		}
-		std::cerr << "Not supported image color format" << std::endl;
-		freeZNG(zngFile);
-		return nullptr;
-	}
-
-	return zngFile;
-}
-
-inline void freeLZ4(void* ptr) {
-	delete[] ptr;
-}
-
-char* decompressLZ4(const char* compressedData, std::size_t uncompressedSize, std::size_t compressedSize) {
-	char* decompressedBuffer = new char[uncompressedSize];
-
-	int decompressedSize = LZ4_decompress_safe(compressedData, decompressedBuffer, compressedSize, uncompressedSize);
+	int decompressedSize = LZ4_decompress_safe(reinterpret_cast<const char*>(compressedData), decompressedBuffer.get(), compressedSize, uncompressedSize);
 
 	if (decompressedSize != uncompressedSize) {
 		std::cerr << "Error decompressing, expected " << uncompressedSize << " bytes but got " << decompressedSize << " bytes instead." << std::endl;
-		delete[] decompressedBuffer;
         return nullptr;
 	}
 
     return decompressedBuffer;
 }
 
-LZ4* compressLZ4(const char* data, std::size_t dataSize, int compressionLevel) {
+static std::unique_ptr<char[]> compressLZ4(const void* data, std::size_t dataSize, int compressionLevel) {
 	int maxSize = LZ4_compressBound(dataSize);
-	LZ4* compressedData = reinterpret_cast<LZ4*>(new char[8 + maxSize]);
+	auto compressedData = std::make_unique<char[]>(8 + maxSize);
+	LZ4* compressed = reinterpret_cast<LZ4*>(compressedData.get());
 
-	int compSize = LZ4_compress_HC(data, compressedData->data, dataSize, maxSize, compressionLevel);
+	int compSize = LZ4_compress_HC(static_cast<const char*>(data), compressed->data, dataSize, maxSize, compressionLevel);
 	if (compSize == 0) {
-		delete[] compressedData;
 		return nullptr;
 	}
 
-	compressedData->uncompressedSize = dataSize;
-	compressedData->compressedSize = compSize;
+	compressed->uncompressedSize = dataSize;
+	compressed->compressedSize = compSize;
 
 	return compressedData;
 }
 
-std::size_t openInputFile(std::ifstream& inputFile, const std::filesystem::path& inputPath, bool& isZNG) {
-	inputFile.open(inputPath, std::ios::binary);
-	if (!inputFile.is_open()) {
-		std::cerr << "Failed to open input file: " << inputPath.string() << std::endl;
-		return -1;
-	}
-
-	int magic;
-	inputFile.read(reinterpret_cast<char*>(&magic), 4);
-	isZNG = magic == ZNG_MAGIC_NUMBER;
-
-	inputFile.seekg(0, std::ios::beg);
-
-	return std::filesystem::file_size(inputPath);
-}
-
-bool saveOutputFile(const std::filesystem::path& outputPath, const void* data, std::size_t dataSize) {
+static bool saveOutputFile(const std::filesystem::path& outputPath, const void* data, std::size_t dataSize) {
 	std::ofstream outputFile = std::ofstream(outputPath, std::ios::binary);
 	if (!outputFile.is_open()) {
 		std::cerr << "Failed to open output file: " << outputPath.string() << std::endl;
@@ -130,89 +83,97 @@ bool saveOutputFile(const std::filesystem::path& outputPath, const void* data, s
 	return true;
 }
 
-bool savePNG(const std::filesystem::path& pngPath, const char* rgbaData, int width, int height) {
+static bool savePNG(const std::filesystem::path& pngPath, const void* rgbaData, int width, int height) {
 	int pngDataLen;
 	unsigned char* pngData = stbi_write_png_to_mem(reinterpret_cast<const unsigned char *>(rgbaData), width * 4, width, height, 4, &pngDataLen);
 	DestructorGuard pngData_guard([&](){ STBI_FREE(pngData); });
 	return saveOutputFile(pngPath, pngData, pngDataLen);
 }
 
-bool convert_zng_to_png(std::ifstream& inputFile, std::size_t inputFileSize, const std::filesystem::path& outputFilePath, bool savePasses) {
-	ZNG* zng = loadZNG(inputFile, inputFileSize);
-	if (zng == nullptr) {
-		return false;
-	}
-	DestructorGuard zng_guard([&](){ freeZNG(zng); });
+static int convert_zng_to_png(const void* inputData, std::size_t inputFileSize, gengetopt_args_info& args_info) {
+	std::filesystem::path outputFilePath = args_info.output_arg;
+	bool savePasses = args_info.save_passes_given;
 
-	LZ4* lz4 = &zng->lz4;
-	LZ4* pass1res = reinterpret_cast<LZ4*>(decompressLZ4(lz4->data, lz4->uncompressedSize, lz4->compressedSize));
+	const ZNG* zng = reinterpret_cast<const ZNG*>(inputData);
+
+	/*if (zng->magic != ZNG_MAGIC_NUMBER) {
+		return 1;
+	}*/
+
+	if (zng->bpp != 32) {
+		if (zng->bpp == 8) {
+			std::cerr << "Not supported 8bpp zng" << std::endl;
+			return 1;
+		}
+		std::cerr << "Not supported image color format" << std::endl;
+		return 1;
+	}
+
+	const LZ4* lz4 = &zng->lz4;
+
+	auto pass1resData = decompressLZ4(lz4->data, lz4->uncompressedSize, lz4->compressedSize);
+	LZ4* pass1res = reinterpret_cast<LZ4*>(pass1resData.get());
 	if (pass1res == nullptr) {
 		std::cerr << "First pass of decompression failed." << std::endl;
-		return false;
+		return 1;
 	}
-	DestructorGuard pass1res_guard([&](){ freeLZ4(pass1res); });
 
 	if (savePasses) {
 		saveOutputFile(outputFilePath.string() + ".pass1", pass1res, lz4->uncompressedSize);
 	}
 
-	char* pass2res = decompressLZ4(pass1res->data, pass1res->uncompressedSize, pass1res->compressedSize);
+	auto pass2res = decompressLZ4(pass1res->data, pass1res->uncompressedSize, pass1res->compressedSize);
 	if (pass2res == nullptr) {
 		std::cerr << "Second pass of decompression failed." << std::endl;
-		return false;
+		return 1;
 	}
-	DestructorGuard pass2res_guard([&](){ freeLZ4(pass2res); });
 
 	if (savePasses) {
-		saveOutputFile(outputFilePath.string() + ".pass2", pass2res, pass1res->uncompressedSize);
+		saveOutputFile(outputFilePath.string() + ".pass2", pass2res.get(), pass1res->uncompressedSize);
 	}
 
-	if (!savePNG(outputFilePath, pass2res, zng->width, zng->height)) {
-		return false;
-	}
-
-	return true;
+	return savePNG(outputFilePath, pass2res.get(), zng->width, zng->height) ? 0 : 1;
 }
 
-bool convert_img_to_zng(std::ifstream& inputFile, std::size_t inputFileSize, const std::filesystem::path& outputFilePath, int c1, int c2, bool savePasses) {
-	unsigned char* inputData = new unsigned char[inputFileSize];
-	inputFile.read(reinterpret_cast<char*>(inputData), inputFileSize);
+static int convert_img_to_zng(const void* inputData, std::size_t inputFileSize, gengetopt_args_info& args_info) {
+	std::filesystem::path outputFilePath = args_info.output_arg;
+	bool savePasses = args_info.save_passes_given;
 
 	int width, height, channels;
-	char* rgbaData = reinterpret_cast<char*>(stbi_load_from_memory(inputData, inputFileSize, &width, &height, &channels, STBI_rgb_alpha));
+	stbi_uc* rgbaData = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(inputData), inputFileSize, &width, &height, &channels, STBI_rgb_alpha);
 	if (rgbaData == nullptr) {
 		std::cerr << "Image loading failed. You might be using an unsupported image format." << std::endl;
-		return false;
+		return 1;
 	}
 	DestructorGuard rgbaData_guard([&](){ STBI_FREE(rgbaData); });
 
 	int rgbaDataSize = width * height * 4;
 
-	LZ4* pass1res = compressLZ4(rgbaData, rgbaDataSize, c1);
+	auto pass1resData = compressLZ4(rgbaData, rgbaDataSize, args_info.c1_arg);
+	LZ4* pass1res = reinterpret_cast<LZ4*>(pass1resData.get());
 	if (pass1res == nullptr) {
 		std::cerr << "First pass of compression failed." << std::endl;
-		return false;
+		return 1;
 	}
-	DestructorGuard pass1res_guard([&](){ freeLZ4(pass1res); });
 
 	if (savePasses) {
 		saveOutputFile(outputFilePath.string() + ".pass1", pass1res, 8 + pass1res->compressedSize);
 	}
 
-	LZ4* pass2res = compressLZ4(reinterpret_cast<char*>(pass1res), 8 + pass1res->compressedSize, c2);
+	auto pass2resData = compressLZ4(pass1res, 8 + pass1res->compressedSize, args_info.c2_arg);
+	LZ4* pass2res = reinterpret_cast<LZ4*>(pass2resData.get());
 	if (pass2res == nullptr) {
 		std::cerr << "Second pass of compression failed." << std::endl;
-		return false;
+		return 1;
 	}
-	DestructorGuard pass2res_guard([&](){ freeLZ4(pass2res); });
 
 	if (savePasses) {
 		saveOutputFile(outputFilePath.string() + ".pass2", pass2res, 8 + pass2res->compressedSize);
 	}
 
 	std::size_t zngFileSize = 16 + 8 + pass2res->compressedSize;
-	auto zngFile = reinterpret_cast<ZNG*>(new char[zngFileSize]);
-	DestructorGuard zngFile_guard([&](){ freeZNG(zngFile); });
+	auto zngFileData = std::make_unique<char[]>(zngFileSize);
+	auto zngFile = reinterpret_cast<ZNG*>(zngFileData.get());
 
 	zngFile->magic = ZNG_MAGIC_NUMBER;
 	zngFile->bpp = 32;
@@ -221,7 +182,7 @@ bool convert_img_to_zng(std::ifstream& inputFile, std::size_t inputFileSize, con
 
 	std::memcpy(&zngFile->lz4, pass2res, pass2res->compressedSize + 8);
 
-	return saveOutputFile(outputFilePath, zngFile, zngFileSize);
+	return saveOutputFile(outputFilePath, zngFile, zngFileSize) ? 0 : 1;
 }
 
 int main(int argc, char* argv[]) {
@@ -231,23 +192,24 @@ int main(int argc, char* argv[]) {
 	}
 	DestructorGuard args_info_guard([&](){ cmdline_parser_free(&args_info); });
 
-	std::ifstream inputFile;
-	bool inputIsZNG;
-	std::size_t inputFileSize = openInputFile(inputFile, args_info.input_arg, inputIsZNG);
-	if (inputFileSize == -1) {
+	std::filesystem::path inputFilePath = args_info.input_arg;
+
+	std::ifstream inputFile(inputFilePath, std::ios::binary);
+	if (!inputFile.is_open()) {
+		std::cerr << "Failed to open input file: " << inputFilePath.string() << std::endl;
 		return 1;
 	}
-	DestructorGuard inputFile_guard([&](){ inputFile.close(); });
 
-	if (inputIsZNG) {
-		if (!convert_zng_to_png(inputFile, inputFileSize, args_info.output_arg, args_info.save_passes_given)) {
-			return 1;
-		}
-	} else {
-		if (!convert_img_to_zng(inputFile, inputFileSize, args_info.output_arg, args_info.c1_arg, args_info.c2_arg, args_info.save_passes_given)) {
-			return 1;
-		}
-	}
+	std::size_t inputFileSize = std::filesystem::file_size(inputFilePath);
 
-	return 0;
+	auto inputData = std::make_unique<char[]>(inputFileSize);
+	inputFile.read(inputData.get(), inputFileSize);
+	inputFile.close();
+
+	std::uint32_t magic;
+	std::memcpy(&magic, inputData.get(), 4);
+
+	return (magic == ZNG_MAGIC_NUMBER) ?
+		convert_zng_to_png(inputData.get(), inputFileSize, args_info) :
+		convert_img_to_zng(inputData.get(), inputFileSize, args_info);
 }
