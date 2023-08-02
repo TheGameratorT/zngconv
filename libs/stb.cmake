@@ -1,0 +1,15 @@
+function(DownloadStbFile fileurl)
+    get_filename_component(filename "${fileurl}" NAME)
+    if(NOT EXISTS "${LIB_DOWNLOAD_DIR}/stb/${filename}")
+        message(STATUS "Downloading ${filename}")
+        file(DOWNLOAD ${fileurl} "${LIB_DOWNLOAD_DIR}/stb/${filename}" TIMEOUT 60 STATUS status LOG log)
+        if(NOT status EQUAL 0)
+            message(FATAL_ERROR "Failed to download file: ${status}")
+        endif()
+    endif()
+endfunction()
+
+DownloadStbFile("https://raw.githubusercontent.com/nothings/stb/5736b15f7ea0ffb08dd38af21067c314d6a3aae9/stb_image.h")
+DownloadStbFile("https://raw.githubusercontent.com/nothings/stb/5736b15f7ea0ffb08dd38af21067c314d6a3aae9/stb_image_write.h")
+
+target_include_directories(${PROJECT_NAME} PRIVATE "${LIB_DOWNLOAD_DIR}/stb")

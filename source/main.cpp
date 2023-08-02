@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <cstring>
 #include <stdint.h>
 #include <lz4.h>
 #include <lz4hc.h>
